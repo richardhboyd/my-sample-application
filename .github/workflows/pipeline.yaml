@@ -1,0 +1,105 @@
+name: Pipeline
+
+on:
+  push:
+    branches:
+      - 'main'
+
+env:
+  SAM_TEMPLATE: template.yaml
+  TESTING_STACK_NAME: sam-app
+  TESTING_ROLE_ARN: arn:aws:iam::829297927853:role/GH-Roles-Role-SS4SFSLC768S
+  TESTING_ARTIFACTS_BUCKET: gh-roles-sambucket-bliscpn42bc3
+  TESTING_REGION: us-west-2
+  SHOW_STACK_TRACE: true
+
+jobs:
+  build-and-package:
+    permissions:
+      id-token: write
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+      - uses: aws-actions/setup-sam@v1
+
+      - name: Build resources
+        run: sam build --template ${SAM_TEMPLATE} --use-container
+
+      - name: dump variables
+        run: printenv
+
+      - name: Assume the testing pipeline user role
+        uses: aws-actions/configure-aws-credentials@9aaa1daa91b40ce855e24cd45fb39b2ca18aeaf1
+        with:
+          aws-region: ${{ env.TESTING_REGION }}
+          role-to-assume: ${{ env.TESTING_ROLE_ARN }}
+
+      - name: Upload artifacts to testing artifact buckets
+        run: |
+          sam package \
+            --s3-bucket ${TESTING_ARTIFACTS_BUCKET} \
+            --region ${TESTING_REGION} \
+            --output-template-file packaged-testing.yaml
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: packaged-testing.yaml
+          path: packaged-testing.yaml
+
+  deploy-testing:
+    permissions:
+      id-token: write
+      contents: read
+    needs: [build-and-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+      - uses: aws-actions/setup-sam@v1
+      - uses: actions/download-artifact@v2
+        with:
+          name: packaged-testing.yaml
+
+      - name: Assume the testing pipeline user role
+        uses: aws-actions/configure-aws-credentials@9aaa1daa91b40ce855e24cd45fb39b2ca18aeaf1
+        with:
+          aws-region: ${{ env.TESTING_REGION }}
+          role-to-assume: ${{ env.TESTING_ROLE_ARN }}
+          role-session-name: testing-deployment
+          role-duration-seconds: 3600
+      - name: Deploy to testing account
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.TESTING_STACK_NAME }}
+          template: packaged-testing.yaml
+          no-fail-on-empty-changeset: true
+          capabilities: CAPABILITY_IAM
+      # - run: |
+      #     sam deploy --stack-name ${TESTING_STACK_NAME} \
+      #       --template packaged-testing.yaml \
+      #       --capabilities CAPABILITY_IAM \
+      #       --region ${TESTING_REGION} \
+      #       --s3-bucket ${TESTING_ARTIFACTS_BUCKET} \
+      #       --no-fail-on-empty-changeset
+      #   name: Deploy to testing account
+
+  integration-test:
+    permissions:
+      id-token: write
+      contents: read
+    needs: [deploy-testing]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assume the testing pipeline user role
+        uses: aws-actions/configure-aws-credentials@9aaa1daa91b40ce855e24cd45fb39b2ca18aeaf1
+        with:
+          aws-region: ${{ env.TESTING_REGION }}
+          role-to-assume: ${{ env.TESTING_ROLE_ARN }}
+          role-session-name: testing-deployment
+          role-duration-seconds: 3600
+      - uses: actions/checkout@v2
+      # - run: export API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name ${{ env.TESTING_STACK_NAME }} --output text --query "Stacks[?StackName=='${{ env.TESTING_STACK_NAME }}'][].Outputs[?OutputKey=='HelloWorldApi'].OutputValue")
+      - run: pip install -r tests/requirements.txt
+      - run: API_ENDPOINT=$(aws cloudformation describe-stacks --stack-name ${{ env.TESTING_STACK_NAME }} --output text --query "Stacks[?StackName=='${{ env.TESTING_STACK_NAME }}'][].Outputs[?OutputKey=='HelloWorldApi'].OutputValue") python -m pytest tests/integration -v
