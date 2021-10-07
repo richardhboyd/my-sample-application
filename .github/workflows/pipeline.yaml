@@ -61,7 +61,7 @@ jobs:
           name: packaged-testing.yaml
 
       - name: Assume the testing pipeline user role
-        uses: aws-actions/configure-aws-credentials@9aaa1daa91b40ce855e24cd45fb39b2ca18aeaf1
+        uses: richardhboyd/configure-aws-credentials@6379f73207db1c4f0b728514e4f8d5d000a7b450
         with:
           aws-region: ${{ env.TESTING_REGION }}
           role-to-assume: ${{ env.TESTING_ROLE_ARN }}
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Assume the testing pipeline user role
-        uses: aws-actions/configure-aws-credentials@9aaa1daa91b40ce855e24cd45fb39b2ca18aeaf1
+        uses: richardhboyd/configure-aws-credentials@6379f73207db1c4f0b728514e4f8d5d000a7b450
         with:
           aws-region: ${{ env.TESTING_REGION }}
           role-to-assume: ${{ env.TESTING_ROLE_ARN }}
